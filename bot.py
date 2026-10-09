@@ -25,6 +25,7 @@ DIGEST_TIME = os.getenv("DIGEST_TIME", "20:00")
 REMIND_MIN = int(os.getenv("REMIND_MIN", "20"))
 YEAR_START_FALLBACK = os.getenv("YEAR_START", "2026-08-31")
 STATE_FILE = Path("state.json")
+PARSER_VERSION = 2  # при изменении парсера старый снимок расписания сбрасывается
 BASE_URL = "https://ssau.ru/rasp"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ssau-schedule-bot/1.0)"}
 DAYS_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
@@ -60,7 +61,8 @@ def parse_week(page: str) -> list[Lesson]:
         cls = child.get("class", [])
         if "schedule__head" in cls:
             m = re.search(r"\d{2}\.\d{2}\.\d{4}", child.get_text())
-            days.append(datetime.strptime(m.group(), "%d.%m.%Y").date() if m else None)
+            if m:  # пустая угловая ячейка без даты днём не считается
+                days.append(datetime.strptime(m.group(), "%d.%m.%Y").date())
         elif "schedule__time" in cls:
             t = [_text(x) for x in child.select(".schedule__time-item")]
             times = (t[0], t[1]) if len(t) >= 2 else None
@@ -262,7 +264,11 @@ def step_remind(st: dict, now: datetime) -> None:
 
 
 def step_changes(st: dict, now: datetime) -> None:
-    old = st["snapshot"]
+    if st.get("parser_version") != PARSER_VERSION:
+        old = None  # парсер обновился: пересоздаём снимок без уведомлений
+        st["parser_version"] = PARSER_VERSION
+    else:
+        old = st["snapshot"]
     cur = week_number(now.date())
     new = {}
     for w in (cur, cur + 1):
